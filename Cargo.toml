@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "kvm-common",
+    "kvm-host",
+    "kvm-client"
+]
+resolver = "2"

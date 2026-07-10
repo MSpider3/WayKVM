@@ -1,0 +1,16 @@
+[package]
+name = "kvm-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kvm-common = { path = "../kvm-common" }
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+clap = { version = "4.0", features = ["derive"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Foundation"
+] }

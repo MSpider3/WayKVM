@@ -1,0 +1,35 @@
+# Rust build artifacts
+target/
+
+# Cargo environment files
+**/*.rs.bk
+*.spec
+
+# IDE and Editor Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Windows specific build/cache directories
+ipch/
+*.aps
+*.odl
+*.rc2
+*.rc0
+*.user
+*.aps
+*.ncb
+*.suo
+*.tlb
+*.tlh
+*.bak
+*.log
+*.pdb
+*.ilk
+*.exe
+*.dll
