@@ -5,7 +5,7 @@ mod windows_impl {
     use std::collections::HashSet;
     use std::net::UdpSocket;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, MOUSEINPUT,
+        SendInput, INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, MOUSEINPUT,
         KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN,
         MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
         MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL,
@@ -150,7 +150,7 @@ mod windows_impl {
         input.Anonymous.mi = MOUSEINPUT {
             dx,
             dy,
-            mouseData: mouse_data,
+            mouseData: mouse_data as u32,
             dwFlags: dw_flags,
             time: 0,
             dwExtraInfo: 0,

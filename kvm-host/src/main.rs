@@ -26,6 +26,10 @@ struct Args {
     /// Optional specific device path to monitor
     #[arg(short, long)]
     device: Option<String>,
+
+    /// Optional hotkey to toggle grab (e.g. "meta+esc", "ctrl+alt+k", or "125,1")
+    #[arg(short, long, default_value = "meta+esc")]
+    hotkey: String,
 }
 
 struct InputDevice {
@@ -47,6 +51,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     println!("KVM Host Daemon starting...");
     println!("Target client: {}", args.client);
+
+    let hotkey_sets = match parse_hotkey(&args.hotkey) {
+        Ok(sets) => sets,
+        Err(e) => {
+            eprintln!("Invalid hotkey configuration: {}", e);
+            std::process::exit(1);
+        }
+    };
+    println!("Hotkey toggle configured: {}", args.hotkey);
 
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(&args.client)?;
@@ -194,6 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut is_grabbed,
                 &mut active_keys,
                 &socket,
+                &hotkey_sets,
             )?;
         }
     }
@@ -261,6 +275,7 @@ fn process_events(
     is_grabbed: &mut bool,
     active_keys: &mut HashSet<u16>,
     socket: &UdpSocket,
+    hotkey_sets: &[HashSet<u16>],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut kvm_events = Vec::new();
     let mut toggle_triggered = false;
@@ -270,12 +285,21 @@ fn process_events(
         let code = ev.code();
         let value = ev.value();
 
-        // Check hotkey combination: Right Ctrl (97) + K (37)
+        // Check configured hotkey combination
         if event_type == 1 { // EV_KEY
             if value == 1 { // Press
                 active_keys.insert(code);
-                if code == 37 && active_keys.contains(&97) {
-                    toggle_triggered = true;
+                
+                // Check if the current pressed key is part of the hotkey
+                let code_is_part_of_hotkey = hotkey_sets.iter().any(|set| set.contains(&code));
+                if code_is_part_of_hotkey {
+                    // Check if all sets are satisfied by active_keys
+                    let all_satisfied = hotkey_sets.iter().all(|set| {
+                        set.iter().any(|k| active_keys.contains(k))
+                    });
+                    if all_satisfied {
+                        toggle_triggered = true;
+                    }
                 }
             } else if value == 2 { // Repeat
                 active_keys.insert(code);
@@ -285,7 +309,7 @@ fn process_events(
         }
 
         if toggle_triggered {
-            // Consume the key K press event so it isn't forwarded
+            // Consume the trigger key press event so it isn't forwarded
             continue;
         }
 
@@ -349,3 +373,117 @@ fn process_events(
 
     Ok(())
 }
+
+fn key_name_to_codes(name: &str) -> Result<HashSet<u16>, String> {
+    let name_lower = name.trim().to_lowercase();
+    
+    // Check if it's a numeric keycode first
+    if let Ok(code) = name_lower.parse::<u16>() {
+        let mut hs = HashSet::new();
+        hs.insert(code);
+        return Ok(hs);
+    }
+    
+    let codes = match name_lower.as_str() {
+        "esc" | "escape" => vec![1],
+        "meta" | "super" | "win" | "windows" | "mod" => vec![125, 126],
+        "leftmeta" | "lmeta" | "lsuper" | "lwin" => vec![125],
+        "rightmeta" | "rmeta" | "rsuper" | "rwin" => vec![126],
+        "ctrl" | "control" => vec![29, 97],
+        "leftctrl" | "lctrl" => vec![29],
+        "rightctrl" | "rctrl" => vec![97],
+        "alt" => vec![56, 100],
+        "leftalt" | "lalt" => vec![56],
+        "rightalt" | "ralt" | "altgr" => vec![100],
+        "shift" => vec![42, 54],
+        "leftshift" | "lshift" => vec![42],
+        "rightshift" | "rshift" => vec![54],
+        "space" | "spacebar" => vec![57],
+        "enter" | "return" => vec![28],
+        "tab" => vec![15],
+        "capslock" | "caps" => vec![58],
+        "a" => vec![30],
+        "b" => vec![48],
+        "c" => vec![46],
+        "d" => vec![32],
+        "e" => vec![18],
+        "f" => vec![33],
+        "g" => vec![34],
+        "h" => vec![35],
+        "i" => vec![23],
+        "j" => vec![36],
+        "k" => vec![37],
+        "l" => vec![38],
+        "m" => vec![50],
+        "n" => vec![49],
+        "o" => vec![24],
+        "p" => vec![25],
+        "q" => vec![16],
+        "r" => vec![19],
+        "s" => vec![31],
+        "t" => vec![20],
+        "u" => vec![22],
+        "v" => vec![47],
+        "w" => vec![17],
+        "x" => vec![45],
+        "y" => vec![21],
+        "z" => vec![44],
+        _ => return Err(format!("Unknown key name: '{}'", name)),
+    };
+    
+    Ok(codes.into_iter().collect())
+}
+
+fn parse_hotkey(hotkey_str: &str) -> Result<Vec<HashSet<u16>>, String> {
+    let parts: Vec<&str> = if hotkey_str.contains('+') {
+        hotkey_str.split('+').collect()
+    } else if hotkey_str.contains(',') {
+        hotkey_str.split(',').collect()
+    } else {
+        vec![hotkey_str]
+    };
+
+    let mut result = Vec::new();
+    for part in parts {
+        let part = part.trim();
+        if !part.is_empty() {
+            result.push(key_name_to_codes(part)?);
+        }
+    }
+
+    if result.is_empty() {
+        return Err("Hotkey cannot be empty".to_string());
+    }
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hotkey() {
+        let hotkey = parse_hotkey("meta+esc").unwrap();
+        assert_eq!(hotkey.len(), 2);
+        assert!(hotkey[0].contains(&125));
+        assert!(hotkey[0].contains(&126));
+        assert!(hotkey[1].contains(&1));
+
+        let hotkey2 = parse_hotkey("ctrl,alt,k").unwrap();
+        assert_eq!(hotkey2.len(), 3);
+        assert!(hotkey2[0].contains(&29));
+        assert!(hotkey2[0].contains(&97));
+        assert!(hotkey2[1].contains(&56));
+        assert!(hotkey2[1].contains(&100));
+        assert!(hotkey2[2].contains(&37));
+
+        let hotkey3 = parse_hotkey("125,1").unwrap();
+        assert_eq!(hotkey3.len(), 2);
+        assert!(hotkey3[0].contains(&125));
+        assert!(hotkey3[1].contains(&1));
+
+        assert!(parse_hotkey("unknown+esc").is_err());
+    }
+}
+

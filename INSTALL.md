@@ -144,11 +144,12 @@ WayKVM automatically searches `/dev/input/` for input devices containing a speci
    sudo ./target/release/kvm-host --client <WINDOWS_IP>:8000 --name Logitech
    ```
    *(Replace `<WINDOWS_IP>` with your Windows IP, e.g., `192.168.1.15`, and replace `Logitech` with your mouse/keyboard identifier if necessary).*
+   *Optional:* You can customize the hotkey that toggles the capture mode by adding `--hotkey <KEY_COMBO>` (e.g., `--hotkey ctrl+alt+k`). The default hotkey is `meta+esc` (Windows/Super key + Escape).
 
 ### 3. Toggle Control
-*   Press **`Right Ctrl + K`** on your keyboard.
+*   Press **`Super + Esc`** (Windows/Super key + Escape) on your keyboard (or your custom hotkey if configured).
 *   Your mouse and keyboard inputs will be locked on Linux and start moving your cursor and entering characters on Windows.
-*   Press **`Right Ctrl + K`** again to return control back to your Linux desktop.
+*   Press **`Super + Esc`** (or your custom hotkey) again to return control back to your Linux desktop.
 
 ---
 

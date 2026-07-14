@@ -34,7 +34,7 @@ sequenceDiagram
 
     User->>Host: Keypress / Mouse Move
     Note over Host: Reads event from non-blocking /dev/input node
-    Note over Host: Hotkey Checker: Right Ctrl + K pressed?
+    Note over Host: Hotkey Checker: Windows/Super + Esc pressed?
     alt Hotkey Activated (Grabbed Mode)
         Host->>Host: Lock devices with EVIOCGRAB (Wayland bypassed)
         Host->>Net: Send Handshake / Event batch (bincode binary)
@@ -89,10 +89,11 @@ Run as **root/sudo** to grant hardware access:
 ```bash
 sudo ./target/release/kvm-host --client <WINDOWS_CLIENT_IP>:8000
 ```
-*Use `--name <FILTER>` to match device names (e.g. `--name Razer`), or `--device <PATH>` to open a specific input node directly.*
+*   Use `--name <FILTER>` to match device names (e.g. `--name Razer`), or `--device <PATH>` to open a specific input node directly.
+*   Use `--hotkey <KEY_COMBO>` (default `"meta+esc"`) to customize the grab/release shortcut. Supported format: keys combined with `+` or `,` (e.g., `ctrl+alt+k` or `meta+esc`). You can also specify raw evdev keycodes directly.
 
 ### Step 3: Toggle
-Press **`Right Ctrl + K`** to grab/release hardware focus.
+Press **`Super + Esc`** (Windows key + Escape) to grab/release hardware focus.
 
 ---
 
