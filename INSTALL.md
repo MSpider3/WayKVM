@@ -116,7 +116,7 @@ WayKVM automatically searches `/dev/input/` for input devices containing a speci
 
 1. List the connected input devices:
    ```bash
-   cat /proc/bus/input/devices
+   grep -E '^N: Name=|^H: Handlers=' /proc/bus/input/devices | paste - -
    ```
 2. Look for the name of your keyboard or mouse receiver (e.g., `Name="Logitech USB Receiver"` or `Name="Razer DeathAdder"`).
 3. Note the name. You will pass this name to the host daemon using the `--name` flag (e.g., `--name Razer`).
@@ -126,14 +126,14 @@ WayKVM automatically searches `/dev/input/` for input devices containing a speci
 ## Step 6: Run the Applications
 
 ### 1. Launch the Receiver on Windows First
-1. Open a Command Prompt **as Administrator** (search for `cmd` in the Start menu, right-click it, and choose "Run as administrator").
+1. Open a PowerShell or Command Prompt **as Administrator**.
 2. Navigate to the built directory:
    ```cmd
    cd target\release
    ```
 3. Run the client:
-   ```cmd
-   kvm-client.exe --bind 0.0.0.0:8000
+   ```powershell
+   .\kvm-client.exe --bind 0.0.0.0:8000
    ```
    *The client will start listening for network packets.*
 

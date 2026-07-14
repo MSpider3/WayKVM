@@ -79,9 +79,9 @@ New-NetFirewallRule -DisplayName "WayKVM Client Receiver" -Direction Inbound -Ac
 ## 🚦 Running WayKVM
 
 ### Step 1: Start Client (Windows)
-Run in an **elevated command prompt (Administrator)**:
-```cmd
-kvm-client.exe --bind 0.0.0.0:8000
+Run in PowerShell (or Command Prompt) inside the output directory:
+```powershell
+.\kvm-client.exe --bind 0.0.0.0:8000
 ```
 
 ### Step 2: Start Host (Linux)

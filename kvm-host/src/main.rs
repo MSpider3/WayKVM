@@ -245,7 +245,7 @@ fn open_and_prepare_device(path: &Path, grab: bool) -> Result<InputDevice, Box<d
 
 fn find_matching_devices(filter: &str) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let filter_lower = filter.to_lowercase();
+    let filters: Vec<String> = filter.split(',').map(|s| s.trim().to_lowercase()).collect();
     if let Ok(entries) = std::fs::read_dir("/dev/input") {
         for entry in entries {
             if let Ok(entry) = entry {
@@ -255,7 +255,8 @@ fn find_matching_devices(filter: &str) -> Vec<PathBuf> {
                         if name_str.starts_with("event") {
                             if let Ok(device) = Device::open(&path) {
                                 if let Some(name) = device.name() {
-                                    if name.to_lowercase().contains(&filter_lower) {
+                                    let name_lower = name.to_lowercase();
+                                    if filters.iter().any(|f| name_lower.contains(f)) {
                                         found.push(path);
                                     }
                                 }
