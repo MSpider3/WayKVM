@@ -97,6 +97,38 @@ Press **`Super + Esc`** (Windows key + Escape) to grab/release hardware focus.
 
 ---
 
+## 🕶️ Running in the Background
+
+If you do not want to keep open terminal windows active, you can run both the host and client silently in the background using startup scripts.
+
+### 1. Windows Client Background Script (`start-client.bat`)
+Create a file named `start-client.bat` in the same directory as `kvm-client.exe`:
+```cmd
+@echo off
+:: Launches the client in a hidden window
+powershell -WindowStyle Hidden -Command "Start-Process .\kvm-client.exe -ArgumentList '--bind 0.0.0.0:8000' -WindowStyle Hidden"
+```
+*To stop the background client, search for `kvm-client` in the Windows Task Manager and terminate the process.*
+
+### 2. Linux Host Background Script (`start-host.sh`)
+Create a file named `start-host.sh` on your Linux machine:
+```bash
+#!/bin/bash
+# Start kvm-host in the background using nohup
+sudo nohup ./target/release/kvm-host --client <WINDOWS_IP>:8000 --name "Logitech" > /dev/null 2>&1 &
+echo "WayKVM host started in the background."
+```
+Make the script executable:
+```bash
+chmod +x start-host.sh
+```
+*To stop the background host, run:*
+```bash
+sudo killall kvm-host
+```
+
+---
+
 ## ⚠️ Safety & Emergency Recovery
 
 The host daemon uses the Linux `EVIOCGRAB` system call to redirect inputs, making the host OS blind to the keyboard and mouse. 
