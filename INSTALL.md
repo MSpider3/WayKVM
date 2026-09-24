@@ -103,9 +103,9 @@ This builds the Windows input injection receiver. The output binary is created a
 The Windows client receives inputs over the local network via UDP port `8000`. By default, Windows blocks incoming network packets unless a rule is defined.
 
 1. Right-click the Windows Start menu button and select **Terminal (Admin)** or **PowerShell (Administrator)**.
-2. Copy and paste the following command, then press `Enter`:
+2. Copy and paste the following command, then press `Enter` (replacing `<LINUX_HOST_IP>` with your Linux machine's local IP address, e.g. `192.168.1.10`, for optimal security):
    ```powershell
-   New-NetFirewallRule -DisplayName "WayKVM Client Receiver" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 8000
+   New-NetFirewallRule -DisplayName "WayKVM Client Receiver" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 8000 -RemoteAddress <LINUX_HOST_IP>
    ```
 
 ---
@@ -125,23 +125,33 @@ WayKVM automatically searches `/dev/input/` for input devices containing a speci
 
 ## Step 6: Run the Applications
 
+WayKVM uses authenticated encryption (**XChaCha20-Poly1305**) to protect your keystrokes and prevent unauthorized input injection. Both machines must share the same key.
+
+### 0. Generate or Choose a Pre-Shared Key
+On Linux, generate a random 32-byte key:
+```bash
+./target/release/kvm-host --generate-key
+```
+*(Or choose a strong passphrase).* You can pass this via `--key <KEY>`, `--key-file <PATH>`, or by setting the `WAYKVM_KEY` environment variable.
+
 ### 1. Launch the Receiver on Windows First
 1. Open a PowerShell or Command Prompt **as Administrator**.
 2. Navigate to the built directory:
    ```cmd
    cd target\release
    ```
-3. Run the client:
+3. Run the client with your key:
    ```powershell
-   .\kvm-client.exe --bind 0.0.0.0:8000
+   .\kvm-client.exe --bind 0.0.0.0:8000 --key "<YOUR_KEY>"
    ```
-   *The client will start listening for network packets.*
+   *Optional:* Add `--allowed-host <LINUX_HOST_IP>` to restrict connections to your Linux machine's IP address.
+   *The client will start listening for authenticated network packets from the host.*
 
 ### 2. Launch the Host on Linux
 1. Find your Windows computer's local IP address (run `ipconfig` in a Windows Command Prompt).
 2. Open a terminal on your Linux computer, navigate to the `WayKVM` directory, and run:
    ```bash
-   sudo ./target/release/kvm-host --client <WINDOWS_IP>:8000 --name Logitech
+   sudo ./target/release/kvm-host --client <WINDOWS_IP>:8000 --name Logitech --key "<YOUR_KEY>"
    ```
    *(Replace `<WINDOWS_IP>` with your Windows IP, e.g., `192.168.1.15`, and replace `Logitech` with your mouse/keyboard identifier if necessary).*
    *Optional:* You can customize the hotkey that toggles the capture mode by adding `--hotkey <KEY_COMBO>` (e.g., `--hotkey ctrl+alt+k`). The default hotkey is `meta+esc` (Windows/Super key + Escape).

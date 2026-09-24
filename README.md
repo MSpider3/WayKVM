@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey.svg?style=flat-svg)](#)
 
-A high-performance, ultra-low-latency network-based Software KVM (Keyboard/Mouse sharing) application written in Rust. It allows you to seamlessly share physical input devices from a Wayland-based Linux host (e.g. Fedora running Niri, Sway, or Hyprland) to a Windows 11 client over a secure local UDP connection.
+A high-performance, ultra-low-latency network-based Software KVM (Keyboard/Mouse sharing) application written in Rust. It allows you to seamlessly share physical input devices from a Wayland-based Linux host (e.g. Fedora running Niri, Sway, or Hyprland) to a Windows 11 client over an authenticated, encrypted UDP connection (using ChaCha20-Poly1305 AEAD, per-packet anti-replay protection, and session pinning).
 
 > [!IMPORTANT]
 > **Directional Limitation Notice:**
@@ -15,13 +15,13 @@ A high-performance, ultra-low-latency network-based Software KVM (Keyboard/Mouse
 ## 📖 Setup Guides
 
 *   **Looking for a quick reference?** Keep reading this document.
-*   **Need step-by-step, beginner-friendly instructions?** Read our detailed [Step-by-Step Installation Guide (INSTALL.md)](INSTALL.md) which walks you through installing Rust, compiling, configuring Windows Firewall rules, and device scanning.
+*   **Need step-by-step, beginner-friendly instructions?** Read our detailed [Step-by-Step Installation Guide (INSTALL.md)](INSTALL.md) which walks you through installing Rust, compiling, configuring Windows Firewall rules, setting up the pre-shared key, and device scanning.
 
 ---
 
 ## 🚀 Architecture Overview
 
-WayKVM works by capturing raw events from Linux input nodes (`/dev/input/event*`), serializing them into a space-efficient binary format using `bincode`, and streaming them to Windows over UDP. The Windows client then maps and injects these events into the OS input queue at the driver level.
+WayKVM works by capturing raw events from Linux input nodes (`/dev/input/event*`), serializing them with `bincode`, and encrypting and authenticating each datagram using **XChaCha20-Poly1305 AEAD** with a pre-shared key (PSK) and monotonic sequence numbers to prevent eavesdropping, tampering, and replay attacks. The Windows client authenticates each datagram, pins the host session peer, checks anti-replay windows, and maps/injects inputs via the Win32 SendInput API.
 
 ```mermaid
 sequenceDiagram
@@ -37,14 +37,15 @@ sequenceDiagram
     Note over Host: Hotkey Checker: Windows/Super + Esc pressed?
     alt Hotkey Activated (Grabbed Mode)
         Host->>Host: Lock devices with EVIOCGRAB (Wayland bypassed)
-        Host->>Net: Send Handshake / Event batch (bincode binary)
+        Host->>Net: Send Handshake / Event batch (ChaCha20-Poly1305 encrypted)
         Net->>Client: Deliver UDP packet
-        Note over Client: Parse packet & map scancodes
+        Note over Client: Verify AEAD tag, check replay window & decrypt
         Client->>OS: Inject inputs via Win32 SendInput API
     else Hotkey Deactivated (Local Mode)
         Host->>Host: Release EVIOCGRAB lock
-        Host->>Net: Send ReleaseAll packet
+        Host->>Net: Send ReleaseAll packet (encrypted)
         Net->>Client: Deliver UDP packet
+        Note over Client: Verify AEAD tag & decrypt
         Client->>OS: Release all pressed virtual keys
         Host->>User: Route input events to local Wayland compositor
     end
@@ -69,30 +70,38 @@ cargo build --release -p kvm-client
 Outputs executable to `target\release\kvm-client.exe`.
 
 ### 3. Open Port 8000 on Windows Firewall
-Run in **PowerShell as Administrator**:
+Run in **PowerShell as Administrator** (recommended: restrict to your Linux host IP):
 ```powershell
-New-NetFirewallRule -DisplayName "WayKVM Client Receiver" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 8000
+New-NetFirewallRule -DisplayName "WayKVM Client Receiver" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 8000 -RemoteAddress <LINUX_HOST_IP>
 ```
 
 ---
 
 ## 🚦 Running WayKVM
 
-### Step 1: Start Client (Windows)
+### Step 1: Generate or Choose a Pre-Shared Key
+WayKVM requires a shared secret key for encryption and authentication. You can generate a random 32-byte key:
+```bash
+./target/release/kvm-host --generate-key
+```
+*(Or choose any strong secret passphrase).* You can pass this via `--key <KEY>`, `--key-file <PATH>`, or by setting the `WAYKVM_KEY` environment variable on both machines.
+
+### Step 2: Start Client (Windows)
 Run in PowerShell (or Command Prompt) inside the output directory:
 ```powershell
-.\kvm-client.exe --bind 0.0.0.0:8000
+.\kvm-client.exe --bind 0.0.0.0:8000 --key "<YOUR_KEY>"
 ```
+*Optional:* Add `--allowed-host <LINUX_HOST_IP>` to restrict connections to your Linux machine's IP address.
 
-### Step 2: Start Host (Linux)
+### Step 3: Start Host (Linux)
 Run as **root/sudo** to grant hardware access:
 ```bash
-sudo ./target/release/kvm-host --client <WINDOWS_CLIENT_IP>:8000
+sudo ./target/release/kvm-host --client <WINDOWS_CLIENT_IP>:8000 --key "<YOUR_KEY>"
 ```
 *   Use `--name <FILTER>` to match device names (e.g. `--name Razer`), or `--device <PATH>` to open a specific input node directly.
 *   Use `--hotkey <KEY_COMBO>` (default `"meta+esc"`) to customize the grab/release shortcut. Supported format: keys combined with `+` or `,` (e.g., `ctrl+alt+k` or `meta+esc`). You can also specify raw evdev keycodes directly.
 
-### Step 3: Toggle
+### Step 4: Toggle
 Press **`Super + Esc`** (Windows key + Escape) to grab/release hardware focus.
 
 ---
@@ -105,6 +114,7 @@ If you do not want to keep open terminal windows active, you can run both the ho
 Create a file named `start-client.bat` in the same directory as `kvm-client.exe`:
 ```cmd
 @echo off
+set WAYKVM_KEY=your_secret_key_here
 :: Launches the client in a hidden window
 powershell -WindowStyle Hidden -Command "Start-Process .\kvm-client.exe -ArgumentList '--bind 0.0.0.0:8000' -WindowStyle Hidden"
 ```
@@ -114,8 +124,9 @@ powershell -WindowStyle Hidden -Command "Start-Process .\kvm-client.exe -Argumen
 Create a file named `start-host.sh` on your Linux machine:
 ```bash
 #!/bin/bash
+export WAYKVM_KEY="your_secret_key_here"
 # Start kvm-host in the background using nohup
-sudo nohup ./target/release/kvm-host --client <WINDOWS_IP>:8000 --name "Logitech" > /dev/null 2>&1 &
+sudo -E nohup ./target/release/kvm-host --client <WINDOWS_IP>:8000 --name "Logitech" > /dev/null 2>&1 &
 echo "WayKVM host started in the background."
 ```
 Make the script executable:

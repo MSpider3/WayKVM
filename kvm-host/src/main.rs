@@ -1,6 +1,8 @@
 use clap::Parser;
 use evdev::Device;
-use kvm_common::{serialize_packet, KvmEvent, KvmPacket, PROTOCOL_VERSION};
+use kvm_common::{
+    generate_key, key_to_hex, resolve_key, KvmEvent, KvmPacket, PacketSender, PROTOCOL_VERSION,
+};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::poll::{poll, PollFd, PollFlags};
 use std::collections::HashSet;
@@ -10,14 +12,14 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Client target address (IP:PORT)
-    #[arg(short, long)]
-    client: String,
+    #[arg(short, long, required_unless_present = "generate_key")]
+    client: Option<String>,
 
     /// Optional device name filter (default "Logitech")
     #[arg(short, long, default_value = "Logitech")]
@@ -30,6 +32,18 @@ struct Args {
     /// Optional hotkey to toggle grab (e.g. "meta+esc", "ctrl+alt+k", or "125,1")
     #[arg(short, long, default_value = "meta+esc")]
     hotkey: String,
+
+    /// Pre-shared key (passphrase or 64-char hex) for encryption & authentication. Can also be set via WAYKVM_KEY env var.
+    #[arg(short, long)]
+    key: Option<String>,
+
+    /// Path to file containing pre-shared key
+    #[arg(long)]
+    key_file: Option<PathBuf>,
+
+    /// Generate a secure random 32-byte key (hex) and exit
+    #[arg(long)]
+    generate_key: bool,
 }
 
 struct InputDevice {
@@ -49,8 +63,22 @@ impl Drop for InputDevice {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.generate_key {
+        println!("{}", key_to_hex(&generate_key()));
+        return Ok(());
+    }
+
+    let key = match resolve_key(args.key.as_deref(), args.key_file.as_deref()) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("Authentication error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let client_addr = args.client.as_ref().unwrap();
     println!("KVM Host Daemon starting...");
-    println!("Target client: {}", args.client);
+    println!("Target client: {}", client_addr);
 
     let hotkey_sets = match parse_hotkey(&args.hotkey) {
         Ok(sets) => sets,
@@ -62,8 +90,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Hotkey toggle configured: {}", args.hotkey);
 
     let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect(&args.client)?;
-    println!("Socket connected to client {}", args.client);
+    socket.connect(client_addr)?;
+    println!("Socket connected to client {}", client_addr);
+
+    let session_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let mut sender = PacketSender::new(&key, session_id);
 
     // Register signals using signal-hook for clean termination
     let shutdown_flag = Arc::new(AtomicBool::new(false));
@@ -208,6 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut active_keys,
                 &socket,
                 &hotkey_sets,
+                &mut sender,
             )?;
         }
     }
@@ -217,7 +252,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn open_and_prepare_device(path: &Path, grab: bool) -> Result<InputDevice, Box<dyn std::error::Error>> {
+fn open_and_prepare_device(
+    path: &Path,
+    grab: bool,
+) -> Result<InputDevice, Box<dyn std::error::Error>> {
     let mut device = Device::open(path)?;
 
     // Set non-blocking using fcntl
@@ -277,6 +315,7 @@ fn process_events(
     active_keys: &mut HashSet<u16>,
     socket: &UdpSocket,
     hotkey_sets: &[HashSet<u16>],
+    sender: &mut PacketSender,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut kvm_events = Vec::new();
     let mut toggle_triggered = false;
@@ -287,24 +326,28 @@ fn process_events(
         let value = ev.value();
 
         // Check configured hotkey combination
-        if event_type == 1 { // EV_KEY
-            if value == 1 { // Press
+        if event_type == 1 {
+            // EV_KEY
+            if value == 1 {
+                // Press
                 active_keys.insert(code);
-                
+
                 // Check if the current pressed key is part of the hotkey
                 let code_is_part_of_hotkey = hotkey_sets.iter().any(|set| set.contains(&code));
                 if code_is_part_of_hotkey {
                     // Check if all sets are satisfied by active_keys
-                    let all_satisfied = hotkey_sets.iter().all(|set| {
-                        set.iter().any(|k| active_keys.contains(k))
-                    });
+                    let all_satisfied = hotkey_sets
+                        .iter()
+                        .all(|set| set.iter().any(|k| active_keys.contains(k)));
                     if all_satisfied {
                         toggle_triggered = true;
                     }
                 }
-            } else if value == 2 { // Repeat
+            } else if value == 2 {
+                // Repeat
                 active_keys.insert(code);
-            } else if value == 0 { // Release
+            } else if value == 0 {
+                // Release
                 active_keys.remove(&code);
             }
         }
@@ -354,12 +397,12 @@ fn process_events(
             let packet = KvmPacket::Handshake {
                 version: PROTOCOL_VERSION,
             };
-            let bytes = serialize_packet(&packet)?;
+            let bytes = sender.encrypt_packet(&packet)?;
             let _ = socket.send(&bytes);
         } else {
             // Send ReleaseAll
             let packet = KvmPacket::ReleaseAll;
-            let bytes = serialize_packet(&packet)?;
+            let bytes = sender.encrypt_packet(&packet)?;
             let _ = socket.send(&bytes);
 
             // Reset baseline state completely on toggle-off
@@ -368,7 +411,7 @@ fn process_events(
     } else if *is_grabbed && !kvm_events.is_empty() {
         // Send events batch
         let packet = KvmPacket::Events(kvm_events);
-        let bytes = serialize_packet(&packet)?;
+        let bytes = sender.encrypt_packet(&packet)?;
         let _ = socket.send(&bytes);
     }
 
@@ -377,14 +420,14 @@ fn process_events(
 
 fn key_name_to_codes(name: &str) -> Result<HashSet<u16>, String> {
     let name_lower = name.trim().to_lowercase();
-    
+
     // Check if it's a numeric keycode first
     if let Ok(code) = name_lower.parse::<u16>() {
         let mut hs = HashSet::new();
         hs.insert(code);
         return Ok(hs);
     }
-    
+
     let codes = match name_lower.as_str() {
         "esc" | "escape" => vec![1],
         "meta" | "super" | "win" | "windows" | "mod" => vec![125, 126],
@@ -431,7 +474,7 @@ fn key_name_to_codes(name: &str) -> Result<HashSet<u16>, String> {
         "z" => vec![44],
         _ => return Err(format!("Unknown key name: '{}'", name)),
     };
-    
+
     Ok(codes.into_iter().collect())
 }
 
@@ -487,4 +530,3 @@ mod tests {
         assert!(parse_hotkey("unknown+esc").is_err());
     }
 }
-
